@@ -3,40 +3,15 @@ import csv
 from collections import Counter
 import argparse
 import numpy as np  # For handling weights
+import pandas as pd
 
-def main():
-    parser = argparse.ArgumentParser(description="Run ID3 decision stump experiment.")
-    parser.add_argument('--train', required=True, help='Path to the training dataset')
-    parser.add_argument('--test', required=True, help='Path to the test dataset')
-    parser.add_argument('--metrics', nargs='+', default=['entropy', 'gini', 'majority_error'], help='Metrics to use for information gain (entropy, gini, majority_error)')
-    parser.add_argument('--handle-unknown-as-missing', action='store_true', help='Fill missing values (unknown) with the majority value')
-    
-    args = parser.parse_args()
-    
-    # Load the datasets
-    train_data = load_csv(args.train)
-    test_data = load_csv(args.test)
+# Load dataset from a CSV file
+def load_csv(filepath):
+    with open(filepath, 'r') as file:
+        reader = csv.reader(file)
+        data = [row for row in reader]
+    return data[1:]  # Skip header row
 
-    # Experiment parameters
-    attributes = ['age', 'job', 'marital', 'education', 'default', 'balance', 'housing', 'loan', 'contact', 'day', 'month', 'duration', 'campaign', 'pdays', 'previous', 'poutcome']
-    numerical_indices = [0, 5, 9, 11, 12, 13, 14]  # Adjust based on the dataset description
-    
-    # Run experiment (stump = max_depth of 1)
-    results = run_experiment(
-        train_data, 
-        test_data, 
-        attributes, 
-        args.metrics, 
-        numerical_indices, 
-        handle_unknown_as_missing=args.handle_unknown_as_missing
-    )
-    
-    # Output results
-    df = pd.DataFrame(results)
-    print(df)
-
-if __name__ == "__main__":
-    main()
 
 # Function to calculate the entropy of a dataset
 def entropy(subset, weights):
@@ -179,13 +154,7 @@ def run_experiment(train_data, test_data, attributes, metrics, numerical_indices
     
     return results
 
-# Load dataset from a CSV file
-def load_csv(filepath):
-    with open(filepath, 'r') as file:
-        reader = csv.reader(file)
-        data = [row for row in reader]
-    return data[1:]  # Skip header row
-
+# Test function
 def test_decision_stump():
     # A simple dataset with categorical and numerical attributes
     # Features: ['age', 'job', 'balance', 'loan']
@@ -216,4 +185,39 @@ def test_decision_stump():
     print("Test results:")
     print(experiment_results)
 
+# Run the test
 test_decision_stump()
+
+def main():
+    parser = argparse.ArgumentParser(description="Run ID3 decision stump experiment.")
+    parser.add_argument('--train', required=True, help='Path to the training dataset')
+    parser.add_argument('--test', required=True, help='Path to the test dataset')
+    parser.add_argument('--metrics', nargs='+', default=['entropy', 'gini', 'majority_error'], help='Metrics to use for information gain (entropy, gini, majority_error)')
+    parser.add_argument('--handle-unknown-as-missing', action='store_true', help='Fill missing values (unknown) with the majority value')
+    
+    args = parser.parse_args()
+    
+    # Load the datasets
+    train_data = load_csv(args.train)
+    test_data = load_csv(args.test)
+
+    # Experiment parameters
+    attributes = ['age', 'job', 'balance', 'loan']
+    numerical_indices = [2]  # 'balance' is a numerical attribute
+    
+    # Run experiment (stump = max_depth of 1)
+    results = run_experiment(
+        train_data, 
+        test_data, 
+        attributes, 
+        args.metrics, 
+        numerical_indices, 
+        handle_unknown_as_missing=args.handle_unknown_as_missing
+    )
+    
+    # Output results
+    df = pd.DataFrame(results)
+    print(df)
+
+if __name__ == "__main__":
+    main()
