@@ -1,42 +1,10 @@
 import math
+import numpy as np
+import pandas as pd
+import argparse
 import csv
 from collections import Counter
-import argparse
-import numpy as np  # For handling weights
-
-def main():
-    parser = argparse.ArgumentParser(description="Run ID3 decision stump experiment.")
-    parser.add_argument('--train', required=True, help='Path to the training dataset')
-    parser.add_argument('--test', required=True, help='Path to the test dataset')
-    parser.add_argument('--metrics', nargs='+', default=['entropy', 'gini', 'majority_error'], help='Metrics to use for information gain (entropy, gini, majority_error)')
-    parser.add_argument('--handle-unknown-as-missing', action='store_true', help='Fill missing values (unknown) with the majority value')
-    
-    args = parser.parse_args()
-    
-    # Load the datasets
-    train_data = load_csv(args.train)
-    test_data = load_csv(args.test)
-
-    # Experiment parameters
-    attributes = ['age', 'job', 'marital', 'education', 'default', 'balance', 'housing', 'loan', 'contact', 'day', 'month', 'duration', 'campaign', 'pdays', 'previous', 'poutcome']
-    numerical_indices = [0, 5, 9, 11, 12, 13, 14]  # Adjust based on the dataset description
-    
-    # Run experiment (stump = max_depth of 1)
-    results = run_experiment(
-        train_data, 
-        test_data, 
-        attributes, 
-        args.metrics, 
-        numerical_indices, 
-        handle_unknown_as_missing=args.handle_unknown_as_missing
-    )
-    
-    # Output results
-    df = pd.DataFrame(results)
-    print(df)
-
-if __name__ == "__main__":
-    main()
+import matplotlib.pyplot as plt
 
 # Function to calculate the entropy of a dataset
 def entropy(subset, weights):
@@ -80,7 +48,7 @@ def majority_error(subset, weights):
     
     return 1 - majority_class_proportion
 
-# Function to calculate information gain based on the selected metric and using weighted examples
+# Function to calculate information gain based on the selected metric
 def information_gain(dataset, attribute_index, weights, metric='entropy'):
     if metric == 'entropy':
         total_metric = entropy(dataset, weights)
@@ -105,6 +73,13 @@ def information_gain(dataset, attribute_index, weights, metric='entropy'):
             weighted_metric += weight * majority_error(subset, subset_weights)
     
     return total_metric - weighted_metric
+
+# Load dataset from a CSV file
+def load_csv(filepath):
+    with open(filepath, 'r') as file:
+        reader = csv.reader(file)
+        data = [row for row in reader]
+    return data[1:]  # Skip header row
 
 # ID3 algorithm modified to learn decision stumps (single split)
 def id3_stump(dataset, attributes, weights, metric='entropy'):
@@ -132,17 +107,6 @@ def id3_stump(dataset, attributes, weights, metric='entropy'):
     
     return tree
 
-# Calculate the prediction error for a dataset
-def calculate_error(tree, dataset, attributes):
-    incorrect_predictions = 0
-    for example in dataset:
-        example_dict = {attr: val for attr, val in zip(attributes, example[:-1])}
-        predicted = predict(tree, example_dict)
-        actual = example[-1]
-        if predicted != actual:
-            incorrect_predictions += 1
-    return incorrect_predictions / len(dataset)
-
 # Predict the label for a given example using the decision stump
 def predict(tree, example):
     if not isinstance(tree, dict):
@@ -156,64 +120,183 @@ def predict(tree, example):
     
     return subtree
 
-# Function to run the experiment with decision stumps and metrics
-def run_experiment(train_data, test_data, attributes, metrics, numerical_indices, handle_unknown_as_missing=True):
-    results = []
+# AdaBoost algorithm using decision stumps with efficient error and weight calculation
+def adaboost(train_data, test_data, attributes, T):
+    m = len(train_data)
+    weights = np.ones(m) / m  # Initialize uniform weights
+    stumps = []
+    alphas = []
     
-    # Create a uniform weight for all examples initially
-    initial_weights = np.ones(len(train_data)) / len(train_data)
-    
-    for metric in metrics:
-        # Train the decision stump
-        tree = id3_stump(train_data, attributes, initial_weights, metric=metric)
+    for t in range(T):
+        # Train a decision stump with current weights
+        stump = id3_stump(train_data, attributes, weights)
         
-        # Calculate errors for both training and test sets
-        train_error = calculate_error(tree, train_data, attributes)
-        test_error = calculate_error(tree, test_data, attributes)
+        # Calculate the weighted error
+        error_t = calculate_weighted_error(stump, train_data, weights, attributes)
+        
+        # Compute the stump's weight (alpha)
+        alpha_t = 0.5 * np.log((1 - error_t) / (error_t + 1e-10))  # Add a small epsilon to avoid division by zero
+        
+        # Store the stump and its weight
+        stumps.append(stump)
+        alphas.append(alpha_t)
+        
+        # Update weights
+        weights = update_weights(weights, alpha_t, stump, train_data, attributes)
+    
+    return stumps, alphas
+
+# Function to calculate the weighted error
+def calculate_weighted_error(stump, dataset, weights, attributes):
+    predictions = np.array([predict(stump, {attr: val for attr, val in zip(attributes, example[:-1])}) for example in dataset])
+    actuals = np.array([example[-1] for example in dataset])
+    
+    # Binary classification with 'yes' and 'no', convert to 1 and -1
+    actuals_binary = np.where(actuals == 'yes', 1, -1)
+    predictions_binary = np.where(predictions == 'yes', 1, -1)
+    
+    errors = np.where(predictions_binary != actuals_binary, 1, 0)
+    weighted_error = np.sum(weights * errors) / np.sum(weights)
+    
+    return weighted_error
+
+# Efficient weight updates
+def update_weights(weights, alpha, stump, dataset, attributes):
+    predictions = np.array([predict(stump, {attr: val for attr, val in zip(attributes, example[:-1])}) for example in dataset])
+    actuals = np.array([example[-1] for example in dataset])
+    
+    actuals_binary = np.where(actuals == 'yes', 1, -1)
+    predictions_binary = np.where(predictions == 'yes', 1, -1)
+    
+    # Update the weights: Misclassified examples get increased weights
+    exponent = -alpha * actuals_binary * predictions_binary
+    new_weights = weights * np.exp(exponent)
+    return new_weights / np.sum(new_weights)  # Normalize weights
+
+# Function to binarize numerical features based on the median value
+def binarize_numerical_features(dataset, numerical_columns):
+    binarized_data = dataset.copy()
+    for col in numerical_columns:
+        median_value = binarized_data[col].median()
+        binarized_data[col] = binarized_data[col].apply(lambda x: 'greater' if x > median_value else 'less')
+    return binarized_data
+
+# Final prediction based on weighted majority of all stumps
+def adaboost_predict(stumps, alphas, example, attributes):
+    total_prediction = 0
+    for stump, alpha in zip(stumps, alphas):
+        predicted = predict(stump, example)
+        total_prediction += alpha * (1 if predicted == 'yes' else -1)  # Assuming binary classification 'yes' and 'no'
+    
+    return 'yes' if total_prediction > 0 else 'no'
+
+# Function to calculate the prediction error for the entire dataset using AdaBoost
+def calculate_adaboost_error(stumps, alphas, dataset, attributes):
+    incorrect_predictions = 0
+    for example in dataset:
+        example_dict = {attr: val for attr, val in zip(attributes, example[:-1])}
+        predicted = adaboost_predict(stumps, alphas, example_dict, attributes)
+        actual = example[-1]
+        if predicted != actual:
+            incorrect_predictions += 1
+    
+    return incorrect_predictions / len(dataset)
+
+# Run the AdaBoost experiment with debugging
+def run_adaboost_experiment_with_debug(train_data, test_data, attributes, max_T):
+    results = []
+    stump_train_errors = []
+    stump_test_errors = []
+    
+    for T in range(1, max_T + 1):
+        print(f"Iteration {T}:")
+        
+        # Train AdaBoost with T iterations
+        stumps, alphas = adaboost(train_data, test_data, attributes, T)
+        
+        # Calculate training and test errors
+        train_error = calculate_adaboost_error(stumps, alphas, train_data, attributes)
+        test_error = calculate_adaboost_error(stumps, alphas, test_data, attributes)
+        
+        print(f"  Train Error after {T} iterations: {train_error}")
+        print(f"  Test Error after {T} iterations: {test_error}")
         
         results.append({
-            'Metric': metric,
+            'Iterations': T,
             'Train Error': train_error,
             'Test Error': test_error
         })
+        
+        # Calculate individual stump errors for this iteration
+        stump_train_error = calculate_weighted_error(stumps[-1], train_data, np.ones(len(train_data)) / len(train_data), attributes)
+        stump_test_error = calculate_weighted_error(stumps[-1], test_data, np.ones(len(test_data)) / len(test_data), attributes)
+        
+        print(f"  Stump Train Error for iteration {T}: {stump_train_error}")
+        print(f"  Stump Test Error for iteration {T}: {stump_test_error}")
+        
+        stump_train_errors.append(stump_train_error)
+        stump_test_errors.append(stump_test_error)
     
-    return results
+    return pd.DataFrame(results), stump_train_errors, stump_test_errors
 
-# Load dataset from a CSV file
-def load_csv(filepath):
-    with open(filepath, 'r') as file:
-        reader = csv.reader(file)
-        data = [row for row in reader]
-    return data[1:]  # Skip header row
-
-def test_decision_stump():
-    # A simple dataset with categorical and numerical attributes
-    # Features: ['age', 'job', 'balance', 'loan']
-    # Labels: 'yes' or 'no'
-    train_data = [
-        ['young', 'admin', 2000, 'no', 'no'],  # Feature columns + label
-        ['young', 'admin', 3000, 'yes', 'no'],
-        ['middle-aged', 'technician', 1500, 'no', 'no'],
-        ['middle-aged', 'technician', 1000, 'no', 'no'],
-        ['old', 'admin', 500, 'no', 'yes'],
-        ['old', 'technician', 700, 'no', 'yes']
-    ]
-
-    test_data = [
-        ['young', 'admin', 2500, 'yes', 'no'],  # Example to predict
-        ['middle-aged', 'technician', 800, 'yes', 'yes'],
-        ['old', 'admin', 600, 'no', 'yes']
-    ]
-
-    attributes = ['age', 'job', 'balance', 'loan']
-    metrics = ['entropy']  # We can test with other metrics like 'gini', 'majority_error'
-    numerical_indices = [2]  # 'balance' is a numerical attribute
+# Plotting functions
+def plot_errors_over_iterations(results):
+    plt.figure(figsize=(10, 6))
     
-    # Run experiment with stump decision trees
-    experiment_results = run_experiment(train_data, test_data, attributes, metrics, numerical_indices, handle_unknown_as_missing=False)
+    # Plot training and test errors over iterations
+    plt.plot(results['Iterations'], results['Train Error'], label='Train Error', marker='o')
+    plt.plot(results['Iterations'], results['Test Error'], label='Test Error', marker='o')
     
-    # Display results to verify the accuracy of predictions
-    print("Test results:")
-    print(experiment_results)
+    plt.title('Training and Test Errors vs Number of Iterations (T)')
+    plt.xlabel('Number of Iterations (T)')
+    plt.ylabel('Error')
+    plt.legend()
+    plt.grid(True)
+    plt.show()
 
-test_decision_stump()
+def plot_stump_errors_over_iterations(results, stump_train_errors, stump_test_errors):
+    plt.figure(figsize=(10, 6))
+    
+    # Plot training and test errors for individual decision stumps in each iteration
+    plt.plot(results['Iterations'], stump_train_errors, label='Stump Train Error', marker='o')
+    plt.plot(results['Iterations'], stump_test_errors, label='Stump Test Error', marker='o')
+    
+    plt.title('Stump Training and Test Errors vs Number of Iterations (T)')
+    plt.xlabel('Number of Iterations (T)')
+    plt.ylabel('Error')
+    plt.legend()
+    plt.grid(True)
+    plt.show()
+
+
+# Main function to run the AdaBoost experiment
+def main():
+    parser = argparse.ArgumentParser(description="Run AdaBoost with decision stumps.")
+    parser.add_argument('--train', required=True, help='Path to the training dataset')
+    parser.add_argument('--test', required=True, help='Path to the test dataset')
+    parser.add_argument('--max-T', type=int, default=500, help='Maximum number of boosting iterations (T)')
+    
+    args = parser.parse_args()
+    
+    # Load datasets
+    train_data = load_csv(args.train)
+    test_data = load_csv(args.test)
+
+    # Define attributes (from CSV headers, adjust as necessary)
+    attributes = ['age', 'job', 'marital', 'education', 'default', 'balance', 'housing', 'loan', 
+                  'contact', 'day', 'month', 'duration', 'campaign', 'pdays', 'previous', 'poutcome']
+
+    # Apply binarization or any other preprocessing to the dataset if needed (already assumed in previous steps)
+    
+    # Run AdaBoost experiment with debugging for analysis
+    max_T = args.max_T
+    results, stump_train_errors, stump_test_errors = run_adaboost_experiment_with_debug(
+        train_data, test_data, attributes, max_T
+    )
+    
+    # Plot performance results
+    plot_errors_over_iterations(results)
+    plot_stump_errors_over_iterations(results, stump_train_errors, stump_test_errors)
+
+if __name__ == "__main__":
+    main()
