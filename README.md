@@ -16,3 +16,10 @@ Parameters:
 --test_path: Path to the test dataset (e.g., test.csv).
 --metric: Splitting criterion, can be entropy, gini, or majority_error.
 --max_depth: Maximum depth of the decision tree (e.g., 3).
+
+
+###Running the Logistic Regression comparison and the Neural Network code tests.
+
+ - In the root directory of the project run the run.sh script
+   ```bash
+  ./run.sh
