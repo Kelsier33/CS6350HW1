@@ -18,7 +18,7 @@ Parameters:
 --max_depth: Maximum depth of the decision tree (e.g., 3).
 
 
-###Running the Logistic Regression comparison and the Neural Network code tests.
+### Running the Logistic Regression comparison and the Neural Network code tests.
 
  - In the root directory of the project run the run.sh script
    ```bash
